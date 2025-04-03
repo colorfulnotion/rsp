@@ -425,13 +425,33 @@ fn try_load_input_from_cache<P: NodePrimitives + DeserializeOwned>(
     chain_id: u64,
     block_number: u64,
 ) -> eyre::Result<Option<ClientExecutorInput<P>>> {
-    let cache_path = cache_dir.join(format!("input/{}/{}.bin", chain_id, block_number));
+    // Build the folder path for the specific chain.
+    let input_folder = cache_dir.join(format!("input/{}", chain_id));
 
-    if cache_path.exists() {
-        // TODO: prune the cache if invalid instead
-        let mut cache_file = std::fs::File::open(cache_path)?;
+    // If the folder doesn't exist, there's no cache.
+    if !input_folder.exists() {
+        return Ok(None);
+    }
+
+    // Prepare a pattern to match file names starting with the block number and an underscore.
+    let prefix = format!("{}_", block_number);
+    let mut found_path = None;
+
+    // Iterate over the files in the input folder.
+    for entry in std::fs::read_dir(&input_folder)? {
+        let entry = entry?;
+        let file_name = entry.file_name().into_string().unwrap_or_default();
+        // Check if the file name matches the expected pattern.
+        if file_name.starts_with(&prefix) && file_name.ends_with(".bin") {
+            found_path = Some(entry.path());
+            break;
+        }
+    }
+
+    // If a matching file is found, open and deserialize it.
+    if let Some(path) = found_path {
+        let mut cache_file = std::fs::File::open(path)?;
         let client_input = bincode::deserialize_from(&mut cache_file)?;
-
         Ok(Some(client_input))
     } else {
         Ok(None)
