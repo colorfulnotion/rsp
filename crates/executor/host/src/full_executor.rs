@@ -91,6 +91,7 @@ pub trait BlockExecutor<C: ExecutorComponents> {
             .on_execution_end::<C::Primitives>(&client_input.current_block, &execution_report)
             .await?;
 
+        // this is were proof got generated
         if prove {
             info!("Starting proof generation");
 
@@ -262,17 +263,38 @@ where
                     )
                     .await?;
 
-                if let Some(ref cache_dir) = self.config.cache_dir {
-                    let input_folder = cache_dir.join(format!("input/{}", self.config.chain.id()));
-                    if !input_folder.exists() {
-                        std::fs::create_dir_all(&input_folder)?;
+                    if let Some(ref cache_dir) = self.config.cache_dir {
+                        // Create the folder for storing input files if it doesn't exist.
+                        let input_folder = cache_dir.join(format!("input/{}", self.config.chain.id()));
+                        if !input_folder.exists() {
+                            std::fs::create_dir_all(&input_folder)?;
+                        }
+                    
+
+                        // Extract block info from client_input via the header.
+                        let block_number = client_input.current_block.header.number;
+                        // Compute block hash using the header's hash_slow() method.
+                        let block_hash = client_input.current_block.header.hash_slow();
+                        let state_root = client_input.current_block.header.state_root;
+                    
+                        // Construct file name as "<block_number>_<block_hash>_<state_root>.bin"
+                        let filename = format!("{}_{}_{}.bin", block_number, block_hash, state_root);
+                        let input_path = input_folder.join(&filename);
+                    
+                        // Dump the client input to the file.
+                        let mut cache_file = std::fs::File::create(&input_path)?;
+                        bincode::serialize_into(&mut cache_file, &client_input)?;
+                    
+                        // Retrieve file size.
+                        let metadata = std::fs::metadata(&input_path)?;
+                        let file_size = metadata.len();
+                    
+                        // Print out the file name and its size.
+                        println!(
+                            "Dumped client input to file: {:?} (size: {} bytes)",
+                            input_path, file_size
+                        );
                     }
-
-                    let input_path = input_folder.join(format!("{}.bin", block_number));
-                    let mut cache_file = std::fs::File::create(input_path)?;
-
-                    bincode::serialize_into(&mut cache_file, &client_input)?;
-                }
 
                 client_input
             }
