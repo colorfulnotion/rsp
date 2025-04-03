@@ -134,10 +134,12 @@ impl<C: ConfigureEvm> HostExecutor<C> {
 
         // For every account we touched, fetch the storage proofs for all the slots we touched.
         tracing::info!("fetching storage proofs");
+        // These vectors store the internal account proofs (converted using `eip1186_proof_to_account_proof`)
         let mut before_storage_proofs = Vec::new();
         let mut after_storage_proofs = Vec::new();
 
         for (address, used_keys) in state_requests.iter() {
+            // Collect modified keys from the executor outcome.
             let modified_keys = executor_outcome
                 .state()
                 .state
@@ -149,6 +151,7 @@ impl<C: ConfigureEvm> HostExecutor<C> {
                 .into_iter()
                 .collect::<Vec<_>>();
 
+            // Combine used keys and modified keys.
             let keys = used_keys
                 .iter()
                 .map(|key| B256::from(*key))
@@ -157,6 +160,34 @@ impl<C: ConfigureEvm> HostExecutor<C> {
                 .into_iter()
                 .collect::<Vec<_>>();
 
+            // Fetch the raw (uncompressed) witness proof (EIP-1186 format) for the previous block.
+            let eip1186_before_proof = provider
+            .get_proof(*address, keys.clone())
+            .block_id((block_number - 1).into())
+            .await?;
+            // Convert the raw proof into the internal account proof format.
+            // Note: This conversion does NOT perform any zk compression.
+            let internal_before_proof = eip1186_proof_to_account_proof(eip1186_before_proof.clone());
+
+            // Optionally print both for visual comparison.
+            println!("Raw EIP-1186 before proof for address {:?}: {:#?}", address, eip1186_before_proof);
+            println!("Internal account proof for address {:?}: {:#?}", address, internal_before_proof);
+
+            // Store the internal account proof for further verification.
+            before_storage_proofs.push(internal_before_proof);
+
+            // Repeat the process for the current block's proof.
+            let eip1186_after_proof = provider
+            .get_proof(*address, modified_keys)
+            .block_id((block_number).into())
+            .await?;
+            let internal_after_proof = eip1186_proof_to_account_proof(eip1186_after_proof.clone());
+
+            println!("Raw EIP-1186 after proof for address {:?}: {:#?}", address, eip1186_after_proof);
+            println!("Internal account proof for address {:?}: {:#?}", address, internal_after_proof);
+
+            after_storage_proofs.push(internal_after_proof);               
+/*
             let storage_proof = provider
                 .get_proof(*address, keys.clone())
                 .block_id((block_number - 1).into())
@@ -166,6 +197,7 @@ impl<C: ConfigureEvm> HostExecutor<C> {
             let storage_proof =
                 provider.get_proof(*address, modified_keys).block_id((block_number).into()).await?;
             after_storage_proofs.push(eip1186_proof_to_account_proof(storage_proof));
+*/
         }
 
         let state = EthereumState::from_transition_proofs(
